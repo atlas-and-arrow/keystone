@@ -408,8 +408,6 @@ class Keystone_License {
                 'license_key' => $this->key,
                 'license_id'  => $this->id(),
                 'product'     => $this->product,
-                'domain'      => $this->get_site_domain(),
-                'site_url'    => get_site_url(),
             ),
         ) );
 
@@ -438,6 +436,15 @@ class Keystone_License {
 
             if ( isset( $body->expires ) ) {
                 $this->data->expires = $body->expires;
+            }
+
+            if ( isset( $body->domains ) && is_array( $body->domains ) ) {
+                $this->data->domains = $body->domains;
+                if ( ! empty( $body->domains ) && ! $this->domain_matches( $this->get_site_domain(), $body->domains ) ) {
+                    $this->valid  = false;
+                    $this->reason = 'License is not valid for this domain.';
+                    return false;
+                }
             }
 
             if ( ! empty( $body->key ) ) {
