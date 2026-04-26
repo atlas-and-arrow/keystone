@@ -428,10 +428,16 @@ class Keystone_License {
         }
 
         if ( isset( $body->valid ) && $body->valid === true ) {
+            if ( ! $this->data ) {
+                $this->data = new stdClass();
+            }
+
             if ( isset( $body->features ) && is_array( $body->features ) ) {
-                if ( $this->data ) {
-                    $this->data->features = $body->features;
-                }
+                $this->data->features = $body->features;
+            }
+
+            if ( isset( $body->expires ) ) {
+                $this->data->expires = $body->expires;
             }
 
             if ( ! empty( $body->key ) ) {
