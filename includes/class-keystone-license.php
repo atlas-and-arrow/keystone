@@ -295,11 +295,13 @@ class Keystone_License {
             return false;
         }
 
-        // Local validation
-        $local_result = $this->validate_local();
-        if ( $local_result === false ) {
-            $this->cache_result( 3600 );
-            return false;
+        // Local validation (if secret configured)
+        if ( ! empty( $this->secret ) ) {
+            $local_result = $this->validate_local();
+            if ( $local_result === false ) {
+                $this->cache_result( 3600 );
+                return false;
+            }
         }
 
         // Remote validation (if server configured)
@@ -316,18 +318,32 @@ class Keystone_License {
                 return false;
             }
 
-            // Remote unreachable — trust local validation
-            $this->valid  = true;
-            $this->reason = 'License validated locally (server unreachable).';
-            $this->cache_result( 3600 );
-            return true;
+            // Remote unreachable — trust local validation if available
+            if ( ! empty( $this->secret ) ) {
+                $this->valid  = true;
+                $this->reason = 'License validated locally (server unreachable).';
+                $this->cache_result( 3600 );
+                return true;
+            }
+
+            $this->valid  = false;
+            $this->reason = 'License server is unreachable.';
+            $this->cache_result( 300 ); // 5 minutes
+            return false;
         }
 
         // No server configured — local validation is sufficient
-        $this->valid  = true;
-        $this->reason = 'License validated locally.';
-        $this->cache_result( 86400 );
-        return true;
+        if ( ! empty( $this->secret ) ) {
+            $this->valid  = true;
+            $this->reason = 'License validated locally.';
+            $this->cache_result( 86400 );
+            return true;
+        }
+
+        $this->valid  = false;
+        $this->reason = 'License cannot be validated.';
+        $this->cache_result( 3600 );
+        return false;
     }
 
     /**
@@ -386,23 +402,24 @@ class Keystone_License {
      * @return bool|null True if valid, false if invalid, null if unreachable
      */
     private function validate_remote() {
-        $response = wp_remote_post( $this->server . '/validate', array(
+        $response = wp_remote_post( $this->server . '/?action=validate', array(
             'timeout' => 15,
             'body'    => array(
-                'license_id' => $this->id(),
-                'product'    => $this->product,
-                'domain'     => $this->get_site_domain(),
-                'site_url'   => get_site_url(),
+                'license_key' => $this->key,
+                'license_id'  => $this->id(),
+                'product'     => $this->product,
+                'domain'      => $this->get_site_domain(),
+                'site_url'    => get_site_url(),
             ),
         ) );
 
         if ( is_wp_error( $response ) ) {
-            return null; // Server unreachable
+            return null;
         }
 
         $code = wp_remote_retrieve_response_code( $response );
         if ( $code < 200 || $code >= 300 ) {
-            return null; // Server error
+            return null;
         }
 
         $body = json_decode( wp_remote_retrieve_body( $response ) );
@@ -411,6 +428,18 @@ class Keystone_License {
         }
 
         if ( isset( $body->valid ) && $body->valid === true ) {
+            if ( isset( $body->features ) && is_array( $body->features ) ) {
+                if ( $this->data ) {
+                    $this->data->features = $body->features;
+                }
+            }
+
+            if ( ! empty( $body->key ) ) {
+                $this->key = $body->key;
+                update_option( "keystone_{$this->product}_license_key", $this->key );
+                $this->data = $this->decrypt( $this->key );
+            }
+
             return true;
         }
 
